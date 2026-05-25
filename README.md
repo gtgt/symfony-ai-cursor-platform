@@ -13,7 +13,7 @@ Pick **one** backend:
 ## Installation
 
 ```bash
-composer require gtgt/symfony-ai-cursor-platform symfony/ai-bundle symfony/ai-agent
+composer require symfony/ai-bundle symfony/ai-agent gtgt/symfony-ai-cursor-platform:@dev
 ```
 
 ## Quick start (CLI)
