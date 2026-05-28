@@ -27,7 +27,7 @@ final class PlatformConfigurator
      */
     public static function registerCloud(array $config, ContainerConfigurator $configurator, ContainerBuilder $container): void
     {
-        $container->setParameter('ai.platform.cursor.api_key', $config['api_key']);
+        $container->setParameter('ai.platform.cursor.api_key', $config['api_key'] ?? '');
         $container->setParameter('ai.platform.cursor.base_uri', $config['base_uri'] ?? 'https://api.cursor.com/');
         $container->setParameter('ai.platform.cursor.repositories', $config['repositories'] ?? []);
 
