@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace Symfony\AI\Platform\Bridge\Cursor\CloudAgent\Api;
 
+use Symfony\AI\Platform\Exception\RuntimeException;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 
 /**
- * Collects assistant text deltas from a Cloud Agents run SSE stream.
+ * Parses Server-Sent Events from a Cursor Cloud Agents run stream into structured {@see SseEvent} frames.
  */
 final class RunStreamReader
 {
@@ -17,54 +18,131 @@ final class RunStreamReader
     ) {
     }
 
-    public function collectAssistantText(ResponseInterface $response): string
+    /**
+     * Streams SSE events as they arrive.
+     *
+     * @return \Generator<int, SseEvent>
+     */
+    public function events(ResponseInterface $response): \Generator
     {
         $buffer = '';
-        $text = '';
 
         foreach ($this->httpClient->stream($response) as $chunk) {
             if ($chunk->isTimeout()) {
                 continue;
             }
             $buffer .= $chunk->getContent();
-            while (($pos = strpos($buffer, "\n\n")) !== false) {
-                $rawEvent = substr($buffer, 0, $pos);
+
+            while (false !== ($pos = strpos($buffer, "\n\n"))) {
+                $raw = substr($buffer, 0, $pos);
                 $buffer = substr($buffer, $pos + 2);
-                $text .= self::parseAssistantDelta($rawEvent);
+                $event = self::parseFrame($raw);
+                if (null !== $event) {
+                    yield $event;
+                }
             }
+
             if ($chunk->isLast()) {
                 break;
             }
         }
 
-        if ('' !== $buffer) {
-            $text .= self::parseAssistantDelta($buffer);
+        if ('' !== trim($buffer)) {
+            $event = self::parseFrame($buffer);
+            if (null !== $event) {
+                yield $event;
+            }
         }
-
-        return $text;
     }
 
-    private static function parseAssistantDelta(string $rawEvent): string
+    /**
+     * Convenience for the non-streaming path: drains the SSE stream while aggregating
+     * assistant text and capturing terminal-result metadata.
+     *
+     * @return array{
+     *     text: string,
+     *     runId: ?string,
+     *     status: ?string,
+     *     durationMs: ?int,
+     *     git: ?array<string, mixed>,
+     * }
+     */
+    public function collectFinalText(ResponseInterface $response): array
     {
-        $event = null;
-        $dataLines = [];
-        foreach (preg_split("/\r\n|\n|\r/", $rawEvent) as $line) {
-            if (str_starts_with($line, 'event:')) {
-                $event = trim(substr($line, \strlen('event:')));
-            } elseif (str_starts_with($line, 'data:')) {
-                $dataLines[] = trim(substr($line, \strlen('data:')));
+        $text = '';
+        $runId = null;
+        $status = null;
+        $durationMs = null;
+        $git = null;
+
+        foreach ($this->events($response) as $event) {
+            switch ($event->event) {
+                case 'assistant':
+                    $text .= (string) ($event->data['text'] ?? '');
+                    break;
+                case 'status':
+                    $status = (string) ($event->data['status'] ?? $status);
+                    $runId = (string) ($event->data['runId'] ?? $runId);
+                    break;
+                case 'result':
+                    $runId = (string) ($event->data['runId'] ?? $runId);
+                    $status = (string) ($event->data['status'] ?? $status);
+                    if (isset($event->data['text']) && \is_string($event->data['text'])) {
+                        $text = $event->data['text'];
+                    }
+                    if (isset($event->data['durationMs'])) {
+                        $durationMs = (int) $event->data['durationMs'];
+                    }
+                    if (isset($event->data['git']) && \is_array($event->data['git'])) {
+                        $git = $event->data['git'];
+                    }
+                    break;
+                case 'error':
+                    throw new RuntimeException(\sprintf(
+                        'Cursor Cloud Agents stream error [%s]: %s',
+                        (string) ($event->data['code'] ?? 'unknown'),
+                        (string) ($event->data['message'] ?? 'no message'),
+                    ));
+                case 'done':
+                    break 2;
             }
         }
 
-        if ('assistant' !== $event || [] === $dataLines) {
-            return '';
+        return [
+            'text' => $text,
+            'runId' => $runId,
+            'status' => $status,
+            'durationMs' => $durationMs,
+            'git' => $git,
+        ];
+    }
+
+    private static function parseFrame(string $raw): ?SseEvent
+    {
+        $event = null;
+        $id = null;
+        $dataLines = [];
+
+        foreach (preg_split("/\r\n|\n|\r/", $raw) ?: [] as $line) {
+            if ('' === $line || ':' === $line[0]) {
+                continue; // empty line or SSE comment
+            }
+            if (str_starts_with($line, 'event:')) {
+                $event = trim(substr($line, 6));
+            } elseif (str_starts_with($line, 'data:')) {
+                $dataLines[] = ltrim(substr($line, 5), ' ');
+            } elseif (str_starts_with($line, 'id:')) {
+                $id = trim(substr($line, 3));
+            }
         }
 
-        $json = json_decode(implode("\n", $dataLines), true);
-        if (!\is_array($json)) {
-            return '';
+        if (null === $event || [] === $dataLines) {
+            return null;
         }
 
-        return (string) ($json['text'] ?? '');
+        $payload = implode("\n", $dataLines);
+        $decoded = json_decode($payload, true);
+
+        return new SseEvent($event, \is_array($decoded) ? $decoded : [], $id);
     }
 }

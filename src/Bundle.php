@@ -31,13 +31,17 @@ final class Bundle extends AbstractBundle
     {
         $configurator->import('../config/services.php');
 
+        $container->registerForAutoconfiguration(\Symfony\AI\Platform\TokenUsage\TokenUsageExtractorInterface::class)
+            ->addTag('ai.platform.token_usage_extractor');
+
         if ($this->isAdapterEnabled($config['cloud'] ?? null)) {
-            PlatformConfigurator::registerCloud($config['cloud'], $container);
+            PlatformConfigurator::registerCloud($config['cloud'], $configurator, $container);
         }
 
         if ($this->isAdapterEnabled($config['cli'] ?? null)) {
             PlatformConfigurator::registerCli(
                 $config['cli'],
+                $configurator,
                 $container,
                 $container->hasParameter('kernel.project_dir') ? (string) $container->getParameter('kernel.project_dir') : null,
             );

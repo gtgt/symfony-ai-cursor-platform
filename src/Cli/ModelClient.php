@@ -6,12 +6,9 @@ namespace Symfony\AI\Platform\Bridge\Cursor\Cli;
 
 use Symfony\AI\Platform\Bridge\Cursor\MessagePayload;
 use Symfony\AI\Platform\Exception\InvalidArgumentException;
-use Symfony\AI\Platform\Exception\RuntimeException;
 use Symfony\AI\Platform\Model;
 use Symfony\AI\Platform\ModelClientInterface;
-use Symfony\AI\Platform\Result\InMemoryRawResult;
 use Symfony\AI\Platform\Result\RawResultInterface;
-use Symfony\Component\Process\Exception\ProcessFailedException;
 use Symfony\Component\Process\Process;
 
 /**
@@ -49,6 +46,13 @@ final class ModelClient implements ModelClientInterface
             throw new InvalidArgumentException(\sprintf('Payload must be an array, string given to "%s".', self::class));
         }
 
+        // Streaming mode implicitly forces stream-json output unless overridden.
+        if (($options['stream'] ?? false) && !isset($options['cursor_output_format'])) {
+            $options['cursor_output_format'] = 'stream-json';
+        }
+
+        $outputFormat = (string) ($options['cursor_output_format'] ?? 'json');
+
         $promptText = MessagePayload::flattenMessages(MessagePayload::requireMessages($payload));
         $command = $this->buildCommand($model, $promptText, $options);
 
@@ -58,39 +62,9 @@ final class ModelClient implements ModelClientInterface
         }
 
         $process = new Process($command, $this->resolveWorkspace($options), $env, null, $this->resolveTimeout($options));
-        $process->run();
+        $process->start();
 
-        if (!$process->isSuccessful()) {
-            throw new ProcessFailedException($process);
-        }
-
-        $stdout = rtrim($process->getOutput());
-        if ('' === $stdout) {
-            throw new RuntimeException('Cursor CLI returned empty output.');
-        }
-
-        $outputFormat = (string) ($options['cursor_output_format'] ?? 'json');
-        if ('stream-json' === $outputFormat) {
-            $lines = array_values(array_filter(
-                explode("\n", $stdout),
-                static fn (string $line): bool => '' !== trim($line),
-            ));
-
-            return new InMemoryRawResult(
-                ['_cli_stdout_lines' => $lines],
-                [],
-                (object) ['status' => 200],
-            );
-        }
-
-        /** @var array<string, mixed> $data */
-        $data = json_decode($stdout, true, 512, \JSON_THROW_ON_ERROR);
-
-        return new InMemoryRawResult(
-            $data,
-            [],
-            (object) ['status' => 200],
-        );
+        return new RawProcessResult($process, $outputFormat);
     }
 
     /**
@@ -106,7 +80,7 @@ final class ModelClient implements ModelClientInterface
         }
 
         $outputFormat = (string) ($options['cursor_output_format'] ?? 'json');
-        if (!\in_array($outputFormat, ['json', 'text', 'stream-json'], true)) {
+        if (!\in_array($outputFormat, ['json', 'stream-json'], true)) {
             throw new InvalidArgumentException(\sprintf('Option "cursor_output_format" must be one of json, text, stream-json; "%s" given.', $outputFormat));
         }
 

@@ -79,6 +79,31 @@ final class RestClient
         return $response;
     }
 
+    /**
+     * Retrieves the terminal state of a run (used as a fallback when the SSE stream has expired).
+     *
+     * @return array<string, mixed>
+     */
+    public function getRun(string $agentId, string $runId): array
+    {
+        $url = $this->endpoint(\sprintf(
+            '/v1/agents/%s/runs/%s',
+            rawurlencode($agentId),
+            rawurlencode($runId),
+        ));
+
+        $response = $this->httpClient->request('GET', $url, [
+            'auth_basic' => [$this->apiKey, ''],
+        ]);
+
+        $this->assertSuccess($response, [401 => AuthenticationException::class]);
+
+        /** @var array<string, mixed> $data */
+        $data = $response->toArray(false);
+
+        return $data;
+    }
+
     private function endpoint(string $path): string
     {
         return rtrim($this->baseUri, '/').$path;

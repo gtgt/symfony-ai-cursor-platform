@@ -4,44 +4,39 @@ declare(strict_types=1);
 
 namespace Symfony\AI\Platform\Bridge\Cursor\DependencyInjection;
 
-use Symfony\AI\Platform\Bridge\Cursor\Cli\Factory as CliFactory;
-use Symfony\AI\Platform\Bridge\Cursor\CloudAgent\Factory as CloudAgentFactory;
-use Symfony\AI\Platform\Platform;
 use Symfony\AI\Platform\PlatformInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-use Symfony\Component\DependencyInjection\ContainerInterface;
-use Symfony\Component\DependencyInjection\Definition;
-use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 
 /**
- * Registers Cursor platform services the same way Symfony AI Bundle registers built-in platforms.
+ * Registers Cursor platform services into the container by importing the dedicated service files
+ * (config/cli_services.php, config/cloud_services.php) after seeding the required parameters and aliases.
+ *
+ * Individual services (ModelClient, ResultConverter, TokenUsageExtractor, RestClient, RunStreamReader,
+ * Provider, Platform) are then available for autowiring/decoration like any other Symfony service.
  */
 final class PlatformConfigurator
 {
     /**
-     * @param array{api_key: string, http_client?: string, base_uri?: string, repositories?: list<array{url: string, startingRef?: string|null, prUrl?: string|null}>} $config
+     * @param array{
+     *     api_key: string,
+     *     http_client?: string,
+     *     base_uri?: string,
+     *     repositories?: list<array{url: string, startingRef?: string|null, prUrl?: string|null}>,
+     * } $config
      */
-    public static function registerCloud(array $config, ContainerBuilder $container): void
+    public static function registerCloud(array $config, ContainerConfigurator $configurator, ContainerBuilder $container): void
     {
-        $platformId = 'ai.platform.cursor';
-        $definition = (new Definition(Platform::class))
-            ->setFactory(CloudAgentFactory::class.'::createPlatform')
-            ->setLazy(true)
-            ->addTag('proxy', ['interface' => PlatformInterface::class])
-            ->setArguments([
-                $config['api_key'] ?? null,
-                new Reference($config['http_client'] ?? 'http_client', ContainerInterface::NULL_ON_INVALID_REFERENCE),
-                new Reference('ai.platform.model_catalog.cursor'),
-                null,
-                new Reference('event_dispatcher', ContainerInterface::IGNORE_ON_INVALID_REFERENCE),
-                $config['base_uri'] ?? 'https://api.cursor.com/',
-                $config['repositories'] ?? [],
-                null,
-            ])
-            ->addTag('ai.platform', ['name' => 'cursor']);
+        $container->setParameter('ai.platform.cursor.api_key', $config['api_key']);
+        $container->setParameter('ai.platform.cursor.base_uri', $config['base_uri'] ?? 'https://api.cursor.com/');
+        $container->setParameter('ai.platform.cursor.repositories', $config['repositories'] ?? []);
 
-        $container->setDefinition($platformId, $definition);
-        $container->registerAliasForArgument($platformId, PlatformInterface::class, 'cursor');
+        // Alias the configured http client service to a stable id used inside cloud_services.php.
+        $container->setAlias('ai.platform.cursor.http_client', $config['http_client'] ?? 'http_client');
+
+        $configurator->import('../config/cloud_services.php');
+
+        $container->registerAliasForArgument('ai.platform.cursor', PlatformInterface::class, 'cursor');
     }
 
     /**
@@ -56,30 +51,20 @@ final class PlatformConfigurator
      *     extra_args?: list<string>,
      * } $config
      */
-    public static function registerCli(array $config, ContainerBuilder $container, ?string $defaultWorkspace = null): void
+    public static function registerCli(array $config, ContainerConfigurator $configurator, ContainerBuilder $container, ?string $defaultWorkspace = null): void
     {
-        $platformId = 'ai.platform.cursor_cli';
-        $definition = (new Definition(Platform::class))
-            ->setFactory(CliFactory::class.'::createPlatform')
-            ->setLazy(true)
-            ->addTag('proxy', ['interface' => PlatformInterface::class])
-            ->setArguments([
-                $config['api_key'] ?? null,
-                $config['binary'] ?? 'agent',
-                $config['workspace'] ?? $defaultWorkspace,
-                $config['trust'] ?? true,
-                $config['force'] ?? false,
-                $config['sandbox'] ?? null,
-                $config['timeout'] ?? 600,
-                $config['extra_args'] ?? [],
-                new Reference('ai.platform.model_catalog.cursor_cli'),
-                null,
-                new Reference('event_dispatcher', ContainerInterface::IGNORE_ON_INVALID_REFERENCE),
-                null,
-            ])
-            ->addTag('ai.platform', ['name' => 'cursor_cli']);
+        $container->setParameter('ai.platform.cursor_cli.api_key', $config['api_key'] ?? null);
+        $container->setParameter('ai.platform.cursor_cli.binary', $config['binary'] ?? 'agent');
+        $container->setParameter('ai.platform.cursor_cli.workspace', $config['workspace'] ?? $defaultWorkspace);
+        $container->setParameter('ai.platform.cursor_cli.trust', $config['trust'] ?? true);
+        $container->setParameter('ai.platform.cursor_cli.force', $config['force'] ?? false);
+        $container->setParameter('ai.platform.cursor_cli.sandbox', $config['sandbox'] ?? null);
+        $container->setParameter('ai.platform.cursor_cli.timeout', $config['timeout'] ?? 600);
+        $container->setParameter('ai.platform.cursor_cli.extra_args', $config['extra_args'] ?? []);
 
-        $container->setDefinition($platformId, $definition);
-        $container->registerAliasForArgument($platformId, PlatformInterface::class, 'cursor_cli');
+        $configurator->import('../config/cli_services.php');
+
+        $container->registerAliasForArgument('ai.platform.cursor_cli', PlatformInterface::class, 'cursor_cli');
     }
 }
+

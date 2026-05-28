@@ -10,7 +10,6 @@ use Symfony\AI\Platform\Bridge\Cursor\MessagePayload;
 use Symfony\AI\Platform\Exception\InvalidArgumentException;
 use Symfony\AI\Platform\Model;
 use Symfony\AI\Platform\ModelClientInterface;
-use Symfony\AI\Platform\Result\InMemoryRawResult;
 use Symfony\AI\Platform\Result\RawResultInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
@@ -59,16 +58,13 @@ final class ModelClient implements ModelClientInterface
         $body = $this->buildRequestBody($model, MessagePayload::flattenMessages(MessagePayload::requireMessages($payload)), $options);
         $run = $this->api->createAgentRun($body);
         $stream = $this->api->openRunStream($run['agentId'], $run['runId']);
-        $text = $this->streamReader->collectAssistantText($stream);
 
-        return new InMemoryRawResult(
-            [
-                'text' => $text,
-                'cursor_agent_id' => $run['agentId'],
-                'cursor_run_id' => $run['runId'],
-            ],
-            [],
-            (object) ['status' => 200],
+        return new RawCloudResult(
+            $this->api,
+            $this->streamReader,
+            $stream,
+            $run['agentId'],
+            $run['runId'],
         );
     }
 

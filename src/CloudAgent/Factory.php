@@ -11,6 +11,7 @@ use Symfony\AI\Platform\ModelRouterInterface;
 use Symfony\AI\Platform\Platform;
 use Symfony\AI\Platform\Provider;
 use Symfony\AI\Platform\ProviderInterface;
+use Symfony\AI\Platform\TokenUsage\TokenUsageExtractorInterface;
 use Symfony\Component\HttpClient\HttpClient;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
@@ -29,6 +30,7 @@ final class Factory
         string $name = 'cursor',
         string $baseUri = 'https://api.cursor.com/',
         array $defaultRepositories = [],
+        ?TokenUsageExtractorInterface $tokenUsageExtractor = null,
     ): ProviderInterface {
         $httpClient ??= HttpClient::create();
         $modelCatalog ??= new ModelCatalog();
@@ -39,7 +41,7 @@ final class Factory
                 ModelClient::fromHttpClient($httpClient, $apiKey, $baseUri, $defaultRepositories),
             ],
             [
-                new ResultConverter(),
+                new ResultConverter($tokenUsageExtractor),
             ],
             $modelCatalog,
             $contract ?? Contract::create(),
@@ -59,9 +61,10 @@ final class Factory
         string $baseUri = 'https://api.cursor.com/',
         array $defaultRepositories = [],
         ?ModelRouterInterface $modelRouter = null,
+        ?TokenUsageExtractorInterface $tokenUsageExtractor = null,
     ): Platform {
         return new Platform(
-            [self::createProvider($apiKey, $httpClient, $modelCatalog, $contract, $eventDispatcher, 'cursor', $baseUri, $defaultRepositories)],
+            [self::createProvider($apiKey, $httpClient, $modelCatalog, $contract, $eventDispatcher, 'cursor', $baseUri, $defaultRepositories, $tokenUsageExtractor)],
             $modelRouter ?? new CatalogBasedModelRouter(),
             $eventDispatcher,
         );
